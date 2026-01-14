@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高中数学：立体几何角的构造演示</title>
+    
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 React 和 ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 引入 Babel 用于解析 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; }
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        // ----------------------------------------------------------------------
+        // 图标组件 (替换 lucide-react 以便在单文件中运行)
+        // ----------------------------------------------------------------------
+        const Icon = ({ path, size = 24, className = "" }) => (
+            <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width={size} 
+                height={size} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                className={className}
+            >
+                {path}
+            </svg>
+        );
+
+        const ChevronRight = (p) => <Icon {...p} path={<path d="m9 18 6-6-6-6"/>} />;
+        const ChevronLeft = (p) => <Icon {...p} path={<path d="m15 18-6-6 6-6"/>} />;
+        const Ruler = (p) => <Icon {...p} path={<><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></>} />;
+        const BookOpen = (p) => <Icon {...p} path={<><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></>} />;
+        const Layers = (p) => <Icon {...p} path={<><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></>} />;
+        const RotateCcw = (p) => <Icon {...p} path={<><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></>} />;
+        const Move3d = (p) => <Icon {...p} path={<><path d="M5 3v18"/><path d="M5 3l4 4"/><path d="M5 21l4-4"/><path d="M18 9l3 3-3 3"/><path d="M21 12H9"/><path d="M9 12l3-3"/><path d="M9 12l3 3"/></>} />;
+
+
+        // ----------------------------------------------------------------------
+        // 3D 数学引擎 (支持旋转)
+        // ----------------------------------------------------------------------
+
+        // 旋转 Hook
+        const useRotation = (initialX = -0.3, initialY = 0.6) => {
+            const [rotation, setRotation] = useState({ x: initialX, y: initialY });
+            const [isDragging, setIsDragging] = useState(false);
+            const lastMousePos = useRef({ x: 0, y: 0 });
+
+            const handleMouseDown = (e) => {
+                setIsDragging(true);
+                lastMousePos.current = { x: e.clientX, y: e.clientY };
+            };
+
+            const handleMouseMove = (e) => {
+                if (!isDragging) return;
+                const deltaX = (e.clientX - lastMousePos.current.x) * 0.01;
+                const deltaY = (e.clientY - lastMousePos.current.y) * 0.01;
+                
+                setRotation(prev => ({
+                    x: Math.max(-1.5, Math.min(0.5, prev.x + deltaY)), // 限制垂直旋转角度，防止翻转
+                    y: prev.y + deltaX
+                }));
+                lastMousePos.current = { x: e.clientX, y: e.clientY };
+            };
+
+            const handleMouseUp = () => setIsDragging(false);
+            const reset = () => setRotation({ x: initialX, y: initialY });
+
+            return { rotation, handlers: { onMouseDown: handleMouseDown, onMouseMove: handleMouseMove, onMouseUp: handleMouseUp, onMouseLeave: handleMouseUp }, reset, isDragging };
+        };
+
+        // 3D 点旋转与投影函数
+        const project3D = (x, y, z, rotation, centerOffset = { x: 0, y: 0, z: 0 }) => {
+            // 1. 中心化 (将模型中心移到原点)
+            let nx = x - centerOffset.x;
+            let ny = y - centerOffset.y;
+            let nz = z - centerOffset.z;
+
+            // 2. 旋转 (先绕 Y 轴水平转，再绕 X 轴垂直转)
+            // 绕 Y 轴
+            let x1 = nx * Math.cos(rotation.y) - nz * Math.sin(rotation.y);
+            let z1 = nx * Math.sin(rotation.y) + nz * Math.cos(rotation.y);
+            // 绕 X 轴
+            let y2 = ny * Math.cos(rotation.x) - z1 * Math.sin(rotation.x);
+            let z2 = ny * Math.sin(rotation.x) + z1 * Math.cos(rotation.x);
+
+            // 3. 投影 (透视投影 + 屏幕偏移)
+            const perspective = 800;
+            const scale = 3000 / (perspective + z2); // 简单的透视缩放
+            
+            // 屏幕中心
+            const screenCx = 200;
+            const screenCy = 160;
+
+            return {
+                x: screenCx + x1 * 1.2, // 放大系数
+                y: screenCy - y2 * 1.2, // SVG y轴向下，所以减去 y2
+                z: z2 // 保留深度信息用于排序(如果需要)
+            };
+        };
+
+        // ----------------------------------------------------------------------
+        // 通用组件
+        // ----------------------------------------------------------------------
+
+        const Card = ({ title, children, className = "" }) => (
+            <div className={`bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden ${className}`}>
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 font-bold text-slate-800 flex items-center gap-2 select-none">
+                    {title}
+                </div>
+                <div className="p-4 relative">
+                    {children}
+                </div>
+            </div>
+        );
+
+        const MathTag = ({ children }) => (
+            <span className="inline-block px-1 rounded text-slate-800 font-serif italic" style={{ fontFamily: '"Times New Roman", Times, serif' }}>
+                {children}
+            </span>
+        );
+
+        const StepController = ({ step, totalSteps, nextStep, prevStep, reset, label }) => (
+            <div className="flex items-center gap-4 mt-6 bg-slate-50 p-3 rounded-lg border border-slate-200 select-none">
+                <button 
+                    onClick={reset}
+                    className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                    title="重置步骤"
+                >
+                    <RotateCcw size={18} />
+                </button>
+                
+                <div className="flex-1 flex flex-col gap-1">
+                    <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        <span>Step {step + 1} / {totalSteps}</span>
+                        <span>{label}</span>
+                    </div>
+                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div 
+                            className="h-full bg-blue-600 transition-all duration-300 ease-out"
+                            style={{ width: `${((step + 1) / totalSteps) * 100}%` }}
+                        />
+                    </div>
+                </div>
+
+                <div className="flex gap-2">
+                    <button 
+                        onClick={prevStep}
+                        disabled={step === 0}
+                        className="p-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                        <ChevronLeft size={20} />
+                    </button>
+                    <button 
+                        onClick={nextStep}
+                        disabled={step === totalSteps - 1}
+                        className="p-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:bg-slate-400 disabled:cursor-not-allowed shadow-sm"
+                    >
+                        <ChevronRight size={20} />
+                    </button>
+                </div>
+            </div>
+        );
+
+        // ----------------------------------------------------------------------
+        // 模块一：线面角演示器 (2D 伪3D)
+        // ----------------------------------------------------------------------
+        const LinePlaneVisualizer = () => {
+            const [step, setStep] = useState(0);
+
+            // 坐标系统
+            const P = { x: 220, y: 60 };
+            const O = { x: 220, y: 180 };
+            const A = { x: 140, y: 220 };
+            const alphaPath = "M 50,230 L 150,110 L 350,110 L 250,230 Z";
+
+            const steps = [
+                {
+                    title: "定位斜线",
+                    desc: "已知平面 α 和斜线 PA，A 为斜足。",
+                    render: () => null
+                },
+                {
+                    title: "作垂线 (找垂足)",
+                    desc: "在斜线上任取一点 P，作 PO ⊥ α 于点 O。",
+                    render: () => (
+                        <>
+                            <line x1={P.x} y1={P.y} x2={O.x} y2={O.y} stroke="#ef4444" strokeWidth="2" strokeDasharray="6 4" />
+                            <circle cx={O.x} cy={O.y} r="3" fill="#ef4444" />
+                            <text x={O.x + 8} y={O.y + 5} className="text-sm fill-red-600 font-bold font-serif" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>O</text>
+                            <path d={`M ${O.x},${O.y-10} L ${O.x+10},${O.y-10} L ${O.x+10},${O.y}`} fill="none" stroke="#ef4444" strokeWidth="1" />
+                        </>
+                    )
+                },
+                {
+                    title: "连射影",
+                    desc: "连接 OA。线段 OA 即为 PA 在 α 上的射影。",
+                    render: () => (
+                        <>
+                            <line x1={P.x} y1={P.y} x2={O.x} y2={O.y} stroke="#ef4444" strokeWidth="2" strokeDasharray="6 4" />
+                            <circle cx={O.x} cy={O.y} r="3" fill="#ef4444" />
+                            <text x={O.x + 8} y={O.y + 5} className="text-sm fill-red-600 font-bold font-serif" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>O</text>
+                            
+                            <line x1={A.x} y1={A.y} x2={O.x} y2={O.y} stroke="#3b82f6" strokeWidth="3" />
+                            <text x={(A.x+O.x)/2} y={(A.y+O.y)/2 + 20} className="text-xs fill-blue-600 font-bold" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>射影</text>
+                        </>
+                    )
+                },
+                {
+                    title: "定角求解",
+                    desc: "∠PAO 即为线面角 θ。",
+                    render: () => (
+                        <>
+                            <line x1={P.x} y1={P.y} x2={O.x} y2={O.y} stroke="#ef4444" strokeWidth="2" strokeDasharray="6 4" />
+                            <line x1={A.x} y1={A.y} x2={O.x} y2={O.y} stroke="#3b82f6" strokeWidth="3" />
+                            {/* 角度符号优化：加光晕防穿模 */}
+                            <path d="M 160,210 Q 172,200 160,180" fill="none" stroke="#8b5cf6" strokeWidth="2" />
+                            <text x={170} y={200} className="text-lg fill-purple-600 font-serif font-bold italic" style={{fontFamily: 'Times New Roman', paintOrder: 'stroke', stroke: 'white', strokeWidth: '4px'}}>θ</text>
+                        </>
+                    )
+                }
+            ];
+
+            return (
+                <div className="flex flex-col md:flex-row gap-6">
+                    <div className="w-full md:w-1/2 relative group">
+                        <svg viewBox="0 0 400 300" className="w-full h-auto bg-white border border-slate-200 rounded shadow-inner">
+                            <defs>
+                                <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                                    <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#f1f5f9" strokeWidth="1"/>
+                                </pattern>
+                            </defs>
+                            <rect width="400" height="300" fill="url(#grid)" />
+                            
+                            <path d={alphaPath} fill="rgba(226, 232, 240, 0.5)" stroke="none" />
+                            <polyline points="50,230 150,110" stroke="#94a3b8" strokeWidth="2" />
+                            <polyline points="50,230 250,230" stroke="#94a3b8" strokeWidth="2" />
+                            <polyline points="250,230 350,110" stroke="#94a3b8" strokeWidth="2" />
+                            <line x1="150" y1="110" x2="350" y2="110" stroke="#94a3b8" strokeWidth="2" strokeDasharray="5,5" />
+
+                            <text x="310" y="140" className="text-lg fill-slate-500 font-serif italic" style={{fontFamily: 'Times New Roman'}}>α</text>
+                            
+                            {steps[step].render()}
+                            
+                            <line x1={P.x} y1={P.y} x2={A.x} y2={A.y} stroke="#1e293b" strokeWidth="3" strokeLinecap="round" />
+                            <circle cx={P.x} cy={P.y} r="4" fill="#1e293b" />
+                            <text x={P.x + 10} y={P.y + 5} className="text-sm fill-slate-800 font-bold font-serif" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>P</text>
+                            <circle cx={A.x} cy={A.y} r="4" fill="#1e293b" />
+                            <text x={A.x - 20} y={A.y + 10} className="text-sm fill-slate-800 font-bold font-serif" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>A</text>
+                        </svg>
+                    </div>
+
+                    <div className="w-full md:w-1/2 flex flex-col justify-between">
+                        <div>
+                            <h3 className="text-xl font-bold text-slate-800 mb-2">{steps[step].title}</h3>
+                            <p className="text-slate-600 text-lg leading-relaxed">{steps[step].desc}</p>
+                        </div>
+                        <StepController 
+                            step={step} totalSteps={steps.length} nextStep={() => setStep(Math.min(steps.length - 1, step + 1))}
+                            prevStep={() => setStep(Math.max(0, step - 1))} reset={() => setStep(0)} label={steps[step].title}
+                        />
+                    </div>
+                </div>
+            );
+        };
+
+        // ----------------------------------------------------------------------
+        // 模块二：二面角演示器 (真 3D + 旋转)
+        // ----------------------------------------------------------------------
+        const DihedralVisualizer = () => {
+            const [method, setMethod] = useState('three-perp');
+            const [step, setStep] = useState(0);
+            
+            // 使用旋转 Hook
+            const { rotation, handlers, reset: resetRotation, isDragging } = useRotation(-0.3, 0.6);
+
+            const changeMethod = (newMethod) => {
+                setMethod(newMethod);
+                setStep(0);
+            };
+
+            // --- 3D 建模参数 ---
+            const angle = Math.PI / 3; // 60度
+            const length = 280; // 棱长
+            const width = 160;  // 面宽
+
+            // 模型中心偏移量 (用于旋转居中)
+            const centerOffset = { x: 100, y: 50, z: 140 };
+
+            // 1. 基础点
+            const origin3D = { x: 0, y: 0, z: 0 };
+            const edgeEnd3D = { x: 0, y: 0, z: length };
+            
+            // Alpha (斜面, Y轴向上)
+            const alphaFar3D = { x: width * Math.cos(angle), y: width * Math.sin(angle), z: length };
+            const alphaNear3D = { x: width * Math.cos(angle), y: width * Math.sin(angle), z: 0 };
+            // Beta (底面, Y=0)
+            const betaFar3D = { x: width, y: 0, z: length };
+            const betaNear3D = { x: width, y: 0, z: 0 };
+
+            // 2. 构造点 (z = 140, 居中截面)
+            const zCut = 140; 
+            const distP = 100; 
+
+            // 三垂线法
+            const P3D = { x: distP * Math.cos(angle), y: distP * Math.sin(angle), z: zCut };
+            const O3D = { x: distP * Math.cos(angle), y: 0, z: zCut }; 
+            const R3D = { x: 0, y: 0, z: zCut }; 
+
+            // 定义法
+            const distDef = 80;
+            const O_def3D = { x: 0, y: 0, z: zCut };
+            const A_def3D = { x: distDef * Math.cos(angle), y: distDef * Math.sin(angle), z: zCut };
+            const B_def3D = { x: distDef + 20, y: 0, z: zCut };
+
+            // 垂面法 Gamma (扇形截面)
+            const gammaTop3D = { x: width * 0.8 * Math.cos(angle), y: width * 0.8 * Math.sin(angle), z: zCut };
+            const gammaBottom3D = { x: width * 0.9, y: 0, z: zCut };
+
+            // 3. 实时投影计算
+            const pOrigin = project3D(origin3D.x, origin3D.y, origin3D.z, rotation, centerOffset);
+            const pEdgeEnd = project3D(edgeEnd3D.x, edgeEnd3D.y, edgeEnd3D.z, rotation, centerOffset);
+            const pAlphaFar = project3D(alphaFar3D.x, alphaFar3D.y, alphaFar3D.z, rotation, centerOffset);
+            const pAlphaNear = project3D(alphaNear3D.x, alphaNear3D.y, alphaNear3D.z, rotation, centerOffset);
+            const pBetaFar = project3D(betaFar3D.x, betaFar3D.y, betaFar3D.z, rotation, centerOffset);
+            const pBetaNear = project3D(betaNear3D.x, betaNear3D.y, betaNear3D.z, rotation, centerOffset);
+
+            const pP = project3D(P3D.x, P3D.y, P3D.z, rotation, centerOffset);
+            const pO = project3D(O3D.x, O3D.y, O3D.z, rotation, centerOffset);
+            const pR = project3D(R3D.x, R3D.y, R3D.z, rotation, centerOffset);
+            
+            const pO_def = project3D(O_def3D.x, O_def3D.y, O_def3D.z, rotation, centerOffset);
+            const pA_def = project3D(A_def3D.x, A_def3D.y, A_def3D.z, rotation, centerOffset);
+            const pB_def = project3D(B_def3D.x, B_def3D.y, B_def3D.z, rotation, centerOffset);
+
+            const pGammaTop = project3D(gammaTop3D.x, gammaTop3D.y, gammaTop3D.z, rotation, centerOffset);
+            const pGammaBottom = project3D(gammaBottom3D.x, gammaBottom3D.y, gammaBottom3D.z, rotation, centerOffset);
+
+
+            const renderSteps = () => {
+                switch (method) {
+                    case 'three-perp':
+                        return [
+                            { title: "定点 (面α)", desc: "在斜面 α 内任取一点 P。" },
+                            { title: "作垂面 (找垂足O)", desc: "过 P 作底面 β 的垂线，垂足 O 必在 β 内。" },
+                            { title: "作垂棱 (找垂足R)", desc: "过 O 作棱 l 的垂线，垂足 R 在 l 上。" },
+                            { title: "连线得角", desc: "连接 PR。由三垂线定理知 PR ⊥ l，故 ∠PRO = θ。" }
+                        ];
+                    case 'definition':
+                        return [
+                            { title: "取点", desc: "在棱 l 上任取一点 O。" },
+                            { title: "作垂线 (面α)", desc: "在 α 内作 OA ⊥ l。" },
+                            { title: "作垂线 (面β)", desc: "在 β 内作 OB ⊥ l。" },
+                            { title: "定角", desc: "∠AOB 即为二面角的平面角 θ。" }
+                        ];
+                    case 'plane':
+                        return [
+                            { title: "作垂面", desc: "作平面 γ ⊥ 棱 l。" },
+                            { title: "找交线 (面α)", desc: "γ ∩ α = OA。" },
+                            { title: "找交线 (面β)", desc: "γ ∩ β = OB。" },
+                            { title: "定角", desc: "∠AOB 即为二面角的平面角。" }
+                        ];
+                    default: return [];
+                }
+            };
+            const stepsList = renderSteps();
+
+            // 辅助渲染: 面与边界
+            const renderPlane = (p1, p2, p3, p4, colorId, label, labelPos) => {
+                const d = `M ${p1.x},${p1.y} L ${p2.x},${p2.y} L ${p3.x},${p3.y} L ${p4.x},${p4.y} Z`;
+                return (
+                    <g>
+                        <path d={d} fill={`url(#${colorId})`} stroke="none" />
+                        <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="black" strokeOpacity="0.3" strokeWidth="1" />
+                        <line x1={p4.x} y1={p4.y} x2={p3.x} y2={p3.y} stroke="black" strokeOpacity="0.3" strokeWidth="1" />
+                        <line x1={p3.x} y1={p3.y} x2={p2.x} y2={p2.y} stroke="black" strokeOpacity="0.1" strokeWidth="1" strokeDasharray="4 2" />
+                        <text x={labelPos.x} y={labelPos.y} className="text-lg font-bold font-serif" fill="#334155" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '4px' }}>{label}</text>
+                    </g>
+                );
+            };
+
+            // 渲染动态辅助图形
+            const renderVisuals = () => {
+                return (
+                    <>
+                        <defs>
+                            <linearGradient id="gradAlpha" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style={{stopColor:'#3b82f6', stopOpacity:0.3}} />
+                                <stop offset="100%" style={{stopColor:'#3b82f6', stopOpacity:0.1}} />
+                            </linearGradient>
+                            <linearGradient id="gradBeta" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" style={{stopColor:'#10b981', stopOpacity:0.3}} />
+                                <stop offset="100%" style={{stopColor:'#10b981', stopOpacity:0.1}} />
+                            </linearGradient>
+                        </defs>
+
+                        {/* 面 Beta */}
+                        {renderPlane(pOrigin, pEdgeEnd, pBetaFar, pBetaNear, "gradBeta", "β", pBetaNear)}
+                        {/* 面 Alpha */}
+                        {renderPlane(pOrigin, pEdgeEnd, pAlphaFar, pAlphaNear, "gradAlpha", "α", pAlphaNear)}
+                        
+                        {/* 棱 l (加粗) */}
+                        <line x1={pOrigin.x} y1={pOrigin.y} x2={pEdgeEnd.x} y2={pEdgeEnd.y} stroke="#1e293b" strokeWidth="4" strokeLinecap="round" />
+                        <text x={pEdgeEnd.x + 10} y={pEdgeEnd.y} className="text-lg font-bold" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '4px' }}>l</text>
+
+                        {/* 方法特定渲染 */}
+                        {method === 'three-perp' && (
+                            <g>
+                                {/* P */}
+                                <circle cx={pP.x} cy={pP.y} r="4" fill="#1e293b" />
+                                <text x={pP.x - 15} y={pP.y - 5} className="text-sm font-bold font-serif" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>P</text>
+                                
+                                {step >= 1 && (
+                                    <>
+                                        <line x1={pP.x} y1={pP.y} x2={pO.x} y2={pO.y} stroke="#ef4444" strokeWidth="2" strokeDasharray="5,5" />
+                                        <circle cx={pO.x} cy={pO.y} r="3" fill="#ef4444" />
+                                        <text x={pO.x + 8} y={pO.y + 5} className="text-sm font-bold font-serif" fill="#dc2626" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>O</text>
+                                    </>
+                                )}
+                                {step >= 2 && (
+                                    <>
+                                        <line x1={pO.x} y1={pO.y} x2={pR.x} y2={pR.y} stroke="#ef4444" strokeWidth="2" />
+                                        <circle cx={pR.x} cy={pR.y} r="3" fill="#ef4444" />
+                                        <text x={pR.x - 20} y={pR.y + 5} className="text-sm font-bold font-serif" fill="#dc2626" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>R</text>
+                                    </>
+                                )}
+                                {step >= 3 && (
+                                    <>
+                                        <line x1={pP.x} y1={pP.y} x2={pR.x} y2={pR.y} stroke="#8b5cf6" strokeWidth="3" />
+                                        {/* 角度 θ 及其弧线符号已移除 (Step 4 要求) */}
+                                        
+                                        {/* 填充三角形 */}
+                                        <path d={`M ${pP.x},${pP.y} L ${pO.x},${pO.y} L ${pR.x},${pR.y} Z`} fill="rgba(239, 68, 68, 0.15)" stroke="none" />
+                                    </>
+                                )}
+                            </g>
+                        )}
+
+                        {method === 'definition' && (
+                            <g>
+                                <circle cx={pO_def.x} cy={pO_def.y} r="4" fill="#ef4444" />
+                                <text x={pO_def.x - 15} y={pO_def.y} className="text-sm font-bold font-serif" fill="#dc2626" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>O</text>
+
+                                {step >= 1 && (
+                                <>
+                                    <line x1={pO_def.x} y1={pO_def.y} x2={pA_def.x} y2={pA_def.y} stroke="#ef4444" strokeWidth="3" />
+                                    <text x={pA_def.x - 10} y={pA_def.y - 10} className="text-sm font-bold font-serif" fill="#dc2626" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>A</text>
+                                </>
+                                )}
+                                {step >= 2 && (
+                                <>
+                                    <line x1={pO_def.x} y1={pO_def.y} x2={pB_def.x} y2={pB_def.y} stroke="#ef4444" strokeWidth="3" />
+                                    <text x={pB_def.x + 5} y={pB_def.y + 5} className="text-sm font-bold font-serif" fill="#dc2626" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>B</text>
+                                </>
+                                )}
+                                {step >= 3 && (
+                                <text x={pO_def.x + 30} y={pO_def.y + 5} className="text-xl font-bold font-serif italic" fill="#7c3aed" style={{ fontFamily: 'Times New Roman', paintOrder: 'stroke', stroke: 'white', strokeWidth: '4px' }}>θ</text>
+                                )}
+                            </g>
+                        )}
+
+                        {method === 'plane' && (
+                            <g>
+                                {/* Gamma 平面: 实体，无虚线 */}
+                                <path d={`M ${pO_def.x},${pO_def.y} L ${pA_def.x},${pA_def.y} L ${pGammaTop.x},${pGammaTop.y} L ${pGammaBottom.x},${pGammaBottom.y} L ${pB_def.x},${pB_def.y} Z`} 
+                                    fill="rgba(249, 115, 22, 0.4)" stroke="none" />
+                                
+                                <path d={`M ${pA_def.x},${pA_def.y} L ${pGammaTop.x},${pGammaTop.y} L ${pGammaBottom.x},${pGammaBottom.y} L ${pB_def.x},${pB_def.y}`} 
+                                    fill="none" stroke="#ea580c" strokeWidth="1" />
+                                
+                                <text x={pB_def.x + 10} y={pB_def.y - 15} className="text-lg font-bold font-serif" fill="#ea580c" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '4px' }}>γ</text>
+
+                                <circle cx={pO_def.x} cy={pO_def.y} r="3" fill="#ea580c" />
+                                <text x={pO_def.x - 15} y={pO_def.y} className="text-sm font-bold font-serif" fill="#c2410c" style={{ paintOrder: 'stroke', stroke: 'white', strokeWidth: '3px' }}>O</text>
+
+                                {step >= 1 && <line x1={pO_def.x} y1={pO_def.y} x2={pA_def.x} y2={pA_def.y} stroke="#ea580c" strokeWidth="3" />}
+                                {step >= 2 && <line x1={pO_def.x} y1={pO_def.y} x2={pB_def.x} y2={pB_def.y} stroke="#ea580c" strokeWidth="3" />}
+                                {step >= 3 && (
+                                <text x={pO_def.x + 35} y={pO_def.y + 5} className="text-xl font-bold font-serif italic" fill="#7c3aed" style={{ fontFamily: 'Times New Roman', paintOrder: 'stroke', stroke: 'white', strokeWidth: '4px' }}>θ</text>
+                                )}
+                            </g>
+                        )}
+                    </>
+                );
+            };
+
+            return (
+                <div className="flex flex-col gap-6">
+                    <div className="flex flex-wrap gap-2 justify-center bg-slate-100 p-2 rounded-lg">
+                        {[
+                        { id: 'three-perp', label: '三垂线定理法 (通法)' },
+                        { id: 'definition', label: '定义法' },
+                        { id: 'plane', label: '垂面法' },
+                        ].map((m) => (
+                        <button
+                            key={m.id}
+                            onClick={() => changeMethod(m.id)}
+                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${
+                            method === m.id 
+                                ? 'bg-white text-blue-600 shadow-md ring-1 ring-slate-200' 
+                                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
+                            }`}
+                        >
+                            {m.label}
+                        </button>
+                        ))}
+                    </div>
+
+                    <div className="flex flex-col md:flex-row gap-6">
+                        <div className="w-full md:w-1/2 bg-white rounded border border-slate-200 relative group overflow-hidden">
+                        {/* 3D 交互层 */}
+                        <div className="absolute top-2 right-2 z-10 bg-black/10 backdrop-blur rounded p-1" title="支持拖拽旋转">
+                            <Move3d size={24} className="text-slate-600" />
+                        </div>
+                        
+                        <svg 
+                            viewBox="0 0 400 320" 
+                            className={`w-full h-auto drop-shadow-xl cursor-move ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                            {...handlers}
+                        >
+                            {renderVisuals()}
+                        </svg>
+
+                        <div className="absolute bottom-2 left-2 text-xs text-slate-400 select-none">
+                            拖动鼠标旋转视角 • <button onClick={resetRotation} className="underline hover:text-blue-500">复位</button>
+                        </div>
+                        </div>
+
+                        <div className="w-full md:w-1/2 flex flex-col justify-between">
+                        <div>
+                            <h3 className="text-xl font-bold text-slate-800 mb-2">{stepsList[step].title}</h3>
+                            <p className="text-slate-600 text-lg leading-relaxed font-serif" style={{fontFamily: '"Times New Roman", sans-serif'}}>
+                            {stepsList[step].desc.split(/( [A-Zα-ω]+ )/).map((part, i) => 
+                                part.match(/^[A-Zα-ω]+$/) ? <i key={i} className="font-serif font-bold">{part}</i> : part
+                            )}
+                            </p>
+                            {method === 'plane' && (
+                            <div className="mt-4 p-3 bg-orange-50 text-orange-800 rounded text-sm border border-orange-100">
+                                <strong>💡 垂面法特点：</strong> 
+                                平面 <MathTag>γ</MathTag> 就像一把刀，垂直于棱切下去。切面是一个垂直于棱的截面，其边界线形成的角就是二面角。
+                            </div>
+                            )}
+                        </div>
+                        <StepController 
+                            step={step} totalSteps={stepsList.length} nextStep={() => setStep(Math.min(stepsList.length - 1, step + 1))}
+                            prevStep={() => setStep(Math.max(0, step - 1))} reset={() => setStep(0)} label="构造进度"
+                        />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // ----------------------------------------------------------------------
+        // 主应用
+        // ----------------------------------------------------------------------
+        const GeometryTeacher = () => {
+            const [activeTab, setActiveTab] = useState('line-plane');
+
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-blue-100 pb-10">
+                    <header className="bg-slate-900 text-white py-6 shadow-md">
+                        <div className="container mx-auto px-4">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Ruler className="text-blue-400" size={32} />
+                                <h1 className="text-2xl md:text-3xl font-bold tracking-tight">立体几何：空间角的构造逻辑</h1>
+                            </div>
+                            <p className="text-slate-400 text-sm md:text-base max-w-2xl">
+                                360° 动态交互演示 | 严谨构造逻辑
+                            </p>
+                        </div>
+                    </header>
+
+                    <main className="container mx-auto px-4 py-8 max-w-5xl">
+                        <div className="flex gap-4 mb-8">
+                            <button 
+                                onClick={() => setActiveTab('line-plane')}
+                                className={`flex-1 py-4 text-center font-bold text-lg rounded-lg border-2 transition-all ${
+                                activeTab === 'line-plane' 
+                                    ? 'border-blue-600 bg-white text-blue-600 shadow-md' 
+                                    : 'border-transparent bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                }`}
+                            >
+                                <div className="flex items-center justify-center gap-2">
+                                <BookOpen size={20} /> 线面角 (Line-Plane)
+                                </div>
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('dihedral')}
+                                className={`flex-1 py-4 text-center font-bold text-lg rounded-lg border-2 transition-all ${
+                                activeTab === 'dihedral' 
+                                    ? 'border-blue-600 bg-white text-blue-600 shadow-md' 
+                                    : 'border-transparent bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                }`}
+                            >
+                                <div className="flex items-center justify-center gap-2">
+                                <Layers size={20} /> 二面角 (Dihedral)
+                                </div>
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-8">
+                            <Card title={activeTab === 'line-plane' ? "线面角构造演示" : "二面角构造演示 (支持拖拽旋转)"}>
+                                {activeTab === 'line-plane' ? <LinePlaneVisualizer /> : <DihedralVisualizer />}
+                            </Card>
+
+                            <Card title="理论精要与解题规范" className="bg-slate-50">
+                                {activeTab === 'line-plane' ? (
+                                    <div className="grid md:grid-cols-2 gap-6 text-sm text-slate-700">
+                                    <div>
+                                        <h4 className="font-bold text-slate-900 mb-2">定义解析</h4>
+                                        <p className="mb-2">平面的一条斜线和它在平面上的射影所成的锐角。范围：<MathTag>[0, \pi/2]</MathTag></p>
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-900 mb-2">解题步骤 (一找二作三连四算)</h4>
+                                        <ol className="list-decimal pl-4 space-y-1">
+                                        <li>**找**：在斜线上任取一点 <MathTag>P</MathTag>。</li>
+                                        <li>**作**：过 <MathTag>P</MathTag> 作平面的垂线，找到垂足 <MathTag>O</MathTag>。</li>
+                                        <li>**连**：连接斜足 <MathTag>A</MathTag> 和垂足 <MathTag>O</MathTag>，得到射影 <MathTag>AO</MathTag>。</li>
+                                        <li>**算**：在 <MathTag>Rt△PAO</MathTag> 中，利用三角函数求解。</li>
+                                        </ol>
+                                    </div>
+                                    </div>
+                                ) : (
+                                    <div className="grid md:grid-cols-2 gap-6 text-sm text-slate-700">
+                                    <div>
+                                        <h4 className="font-bold text-slate-900 mb-2">基本定义</h4>
+                                        <p className="mb-2">从一条直线出发的两个半平面所组成的图形。范围：<MathTag>[0, \pi]</MathTag></p>
+                                    </div>
+                                    <div>
+                                        <h4 className="font-bold text-slate-900 mb-2">常用方法对比</h4>
+                                        <ul className="space-y-2">
+                                        <li><span className="font-bold text-blue-700">定义法：</span> 适用于棱上容易找到特殊点的情况。</li>
+                                        <li><span className="font-bold text-indigo-700">三垂线法：</span> 最通用，将空间角转化为两个线线垂直问题。</li>
+                                        </ul>
+                                    </div>
+                                    </div>
+                                )}
+                            </Card>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<GeometryTeacher />);
+    </script>
+</body>
+</html>
